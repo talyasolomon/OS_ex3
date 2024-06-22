@@ -14,6 +14,7 @@ struct JobContext {
     std::atomic<int> completedTasks;
     std::vector<IntermediatePair> intermediateVec;
     std::atomic<int> intermediateCount;
+    std::atomic<int> outputCount;
     pthread_mutex_t mutex_2;
     pthread_mutex_t mutex_3;
     // TODO: Add any additional data (mutexes, semaphores)
@@ -44,27 +45,15 @@ void* mapReduceThread(void* context) {
   // Get the input vector from the job context
   const InputVec& inputVec = jobContext->inputVec;
 
-  // Lock the mutex_2 before calling emit2 by map
-  pthread_mutex_lock(&jobContext->mutex_2);
-
   // For each input pair, call the client's map function
   for (const auto& inputPair : inputVec) {
     jobContext->client.map(inputPair.first, inputPair.second);
-    jobContext->completedTasks++;
   }
-
-  // Unlock the mutex_2 after calling emit2 by map
-  pthread_mutex_unlock(&jobContext->mutex_2);
-
-  // Lock the mutex_3 before calling emit3 by reduce
-  pthread_mutex_lock(&jobContext->mutex_3);
 
   // After all map operations are done, call the client's reduce function
   // You might need to modify this part depending on how you're storing the intermediate data
   jobContext->client.reduce(/* pass the intermediate data here */);
-
-  // Unlock the mutex_3 after calling emit3 by reduce
-  pthread_mutex_unlock(&jobContext->mutex_3);
+  jobContext->completedTasks++;
 
   return nullptr;
 }
@@ -72,26 +61,21 @@ void* mapReduceThread(void* context) {
 void emit2 (K2* key, V2* value, void* context)
 {
   JobContext* jobContext = static_cast<JobContext*>(context);
-
-  // Lock the mutex before accessing the shared resources
   pthread_mutex_lock(&jobContext->mutex_2);
-
-  // Create an IntermediatePair from the given key and value
   IntermediatePair pair(key, value);
-
-  // Add the pair to the intermediateVec
   jobContext->intermediateVec.push_back(pair);
-
-  // Increment the intermediateCount
   jobContext->intermediateCount++;
-
-  // Unlock the mutex after accessing the shared resources
   pthread_mutex_unlock(&jobContext->mutex_2);
 }
 
 void emit3 (K3* key, V3* value, void* context)
 {
-  // Implement the function here
+  JobContext* jobContext = static_cast<JobContext*>(context);
+  pthread_mutex_lock(&jobContext->mutex_3);
+  OutputPair pair(key, value);
+  jobContext->outputVec.push_back(pair);
+  jobContext->outputCount++;
+  pthread_mutex_unlock(&jobContext->mutex_3);
 }
 
 JobHandle startMapReduceJob(const MapReduceClient& client,
