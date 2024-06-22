@@ -15,3 +15,5 @@ add_executable(ex3
         "Sample Client/SampleClient.cpp"
         MapReduceClient.h
         MapReduceFramework.h)
+
+target_link_libraries(ex3 pthread)
