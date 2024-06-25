@@ -1,9 +1,10 @@
 #include "MapReduceFramework.h"
 #include <pthread.h>
 #include <atomic>
-#include <unordered_map>
 #include <iostream>
 #include <algorithm>
+#include <semaphore.h>
+#include "Barrier/Barrier.h"
 
 #define THREAD_NOT_FOUND "Thread not found in the system"
 
@@ -13,6 +14,7 @@ typedef std::vector<IntermediateVec *> IntermediateMap;
 struct JobContext;
 void sortIntermediateVec (JobContext *context);
 int getThreadIndex (pthread_t thread, JobContext *context);
+void shuffleIntermediateVec(JobContext *context);
 
 struct JobContext
 {
@@ -25,22 +27,22 @@ struct JobContext
     bool *joined;
     std::atomic<int> *totalTasks;
     std::atomic<int> *completedTasks;
-//    std::vector<IntermediatePair> intermediateVec;
-    IntermediateMap intermediateMap;
-    IntermediateMap shuffledVec;
-    std::atomic<int> *intermediateCount;
-    std::atomic<int> *outputCount;
     std::atomic<int> *inputIndex = 0;
     std::atomic<int> *shuffledCount = 0;
+    IntermediateMap intermediateMap;
+    IntermediateMap shuffledVec;
     pthread_mutex_t mutex_2;
     pthread_mutex_t mutex_3;
-    // TODO: Add any additional data (mutexes, semaphores)
-
+    Barrier sortBarrier;
+    sem_t shuffleSemaphore;
 
     JobContext (const MapReduceClient &client, const InputVec &inputVec, OutputVec &outputVec, int multiThreadLevel)
         : client (client), inputVec (inputVec), outputVec (outputVec),
           multiThreadLevel (multiThreadLevel), stage (UNDEFINED_STAGE),
-          completedTasks (0)
+          completedTasks (0), totalTasks (0), inputIndex (0), shuffledCount
+          (0), sortBarrier
+          (multiThreadLevel), intermediateMap (multiThreadLevel, nullptr),
+          shuffledVec (multiThreadLevel, nullptr)
     {
       totalTasks = new std::atomic<int> (inputVec.size ());
       completedTasks = new std::atomic<int> (0);
@@ -50,12 +52,17 @@ struct JobContext
       pthread_mutex_init (&mutex_2, nullptr);
       pthread_mutex_init (&mutex_3, nullptr);
       intermediateMap = IntermediateMap (multiThreadLevel, nullptr);
+      sortBarrier = Barrier (multiThreadLevel);
+      sem_init(&shuffleSemaphore, 0, 0);
     }
 
     ~JobContext ()
     {
       pthread_mutex_destroy (&mutex_2);
       pthread_mutex_destroy (&mutex_3);
+      sem_destroy(&shuffleSemaphore);
+      delete totalTasks;
+      delete completedTasks;
       delete[] threads;
       delete[] joined;
     }
@@ -92,9 +99,26 @@ void *mapReduceThread (void *context)
   // Sort phase
   sortIntermediateVec (jobContext);
 
-  // Shuffle phase
-  jobContext->stage = SHUFFLE_STAGE;
+  // Wait for all threads to complete the sort phase
+  jobContext->sortBarrier.barrier();
 
+  // If this is the shuffle thread (thread 0), perform the shuffle operation
+  if (pthread_self() == jobContext->threads[0])
+  {
+    // Shuffle phase
+    jobContext->stage = SHUFFLE_STAGE;
+    shuffleIntermediateVec(jobContext);
+
+    // Signal other threads that the shuffle phase is complete
+    for (int i = 1; i < jobContext->multiThreadLevel; i++)
+    {
+      sem_post(&jobContext->shuffleSemaphore);
+    }
+  }
+  else // For other threads, wait for the shuffle phase to complete
+  {
+    sem_wait(&jobContext->shuffleSemaphore);
+  }
 }
 
 void emit2 (K2 *key, V2 *value, void *context)
@@ -112,7 +136,7 @@ void emit3 (K3 *key, V3 *value, void *context)
   pthread_mutex_lock (&jobContext->mutex_3);
   OutputPair pair (key, value);
   jobContext->outputVec.push_back (pair);
-  jobContext->outputCount++;
+  jobContext->completedTasks++;
   pthread_mutex_unlock (&jobContext->mutex_3);
 }
 
@@ -197,7 +221,6 @@ void shuffleIntermediateVec(JobContext *context)
   while (!context->intermediateMap.empty())
   {
     IntermediatePair maxPair = context->intermediateMap[0]->back();
-    int maxIndex = 0;
     for (int j = 1; j < context->intermediateMap.size(); j++)
     {
       if (context->intermediateMap[j]->empty())
@@ -208,7 +231,6 @@ void shuffleIntermediateVec(JobContext *context)
       if (*maxPair.first < *currentPair.first)
       {
         maxPair = currentPair;
-        maxIndex = j;
       }
     }
 
