@@ -1,0 +1,50 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+../Barrier/Barrier.h
+pthread.h
+-
+
+../MapReduceClient.h
+vector
+-
+utility
+-
+
+../MapReduceFramework.cpp
+MapReduceFramework.h
+../MapReduceFramework.h
+pthread.h
+-
+atomic
+-
+iostream
+-
+algorithm
+-
+semaphore.h
+-
+Barrier/Barrier.h
+../Barrier/Barrier.h
+
+../MapReduceFramework.h
+MapReduceClient.h
+../MapReduceClient.h
+
+/mnt/c/studies/year_c/semester_B/OS/ex3/Sample Client/SampleClient.cpp
+MapReduceFramework.cpp
+/mnt/c/studies/year_c/semester_B/OS/ex3/Sample Client/MapReduceFramework.cpp
+cstdio
+-
+string
+-
+array
+-
+unistd.h
+-
+

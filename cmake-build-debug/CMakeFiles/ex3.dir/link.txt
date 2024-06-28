@@ -1,0 +1,1 @@
+/usr/bin/c++  -g   CMakeFiles/ex3.dir/Barrier/Barrier.cpp.o CMakeFiles/ex3.dir/Barrier/barrierdemo.cpp.o CMakeFiles/ex3.dir/Sample_Client/SampleClient.cpp.o  -o ex3  -lpthread 
