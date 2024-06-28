@@ -2,7 +2,7 @@ CC=g++
 CXX=g++
 LD=g++
 
-EXESRC=SampleClient.cpp
+EXESRC=SampleClient.cpp ../Barrier/Barrier.cpp
 EXEOBJ=$(EXESRC:.cpp=.o)
 
 INCS=-I.
@@ -18,10 +18,16 @@ TARFLAGS=-cvf
 TARNAME=sampleclient.tar
 TARSRCS=$(EXESRC) Makefile
 
+SampleClient.o: SampleClient.cpp
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+libMapReduceFramework.a: MapReduceFramework.o
+	ar rcs $@ $^
+
 all: $(TARGETS)
 
 $(TARGETS): $(EXEOBJ)
-	$(LD) $(CXXFLAGS) $(EXEOBJ) libMapReduceFramework.a -o $(EXE)
+	$(LD) $(CXXFLAGS) $(EXEOBJ) -o $(EXE) $(LDFLAGS)
 
 clean:
 	$(RM) $(TARGETS) $(EXE) $(OBJ) $(EXEOBJ) *~ *core

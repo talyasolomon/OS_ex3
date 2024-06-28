@@ -27,24 +27,24 @@ void* foo(void* arg)
 }
 
 
-int main(int argc, char** argv)
-{
-	pthread_t threads[MT_LEVEL];
-	ThreadContext contexts[MT_LEVEL];
-	Barrier barrier(MT_LEVEL);
-
-	for (int i = 0; i < MT_LEVEL; ++i) {
-		contexts[i] = {i, &barrier};
-	}
-
-
-	for (int i = 0; i < MT_LEVEL; ++i) {
-		pthread_create(threads + i, NULL, foo, contexts + i);
-	}
-
-	for (int i = 0; i < MT_LEVEL; ++i) {
-		pthread_join(threads[i], NULL);
-	}
-
-	return 0;
-}
+//int main(int argc, char** argv)
+//{
+//	pthread_t threads[MT_LEVEL];
+//	ThreadContext contexts[MT_LEVEL];
+//	Barrier barrier(MT_LEVEL);
+//
+//	for (int i = 0; i < MT_LEVEL; ++i) {
+//		contexts[i] = {i, &barrier};
+//	}
+//
+//
+//	for (int i = 0; i < MT_LEVEL; ++i) {
+//		pthread_create(threads + i, NULL, foo, contexts + i);
+//	}
+//
+//	for (int i = 0; i < MT_LEVEL; ++i) {
+//		pthread_join(threads[i], NULL);
+//	}
+//
+//	return 0;
+//}
