@@ -8,7 +8,7 @@
 
 #define THREAD_NOT_FOUND "Thread not found in the system"
 #define BITS_0_31 0x7FFFFFFF
-#define BITS_32_61 0x3FFFFFFF
+#define BITS_32_61 0x3FFFFFFF  // TODO: why not used?
 #define BIT_62 62
 #define BIT_31 31
 
@@ -190,7 +190,7 @@ void getJobState (JobHandle job, JobState *state)
   uint64_t current_state = *(jobContext->counter);
   state->stage = static_cast<stage_t>(current_state >> BIT_62);
   uint64_t completedTasks = ((current_state >> BIT_31) & BITS_0_31);
-  int totalTasks;
+  size_t totalTasks;
     if (state->stage == UNDEFINED_STAGE)
     {
         totalTasks = 1;  //TODO: check what to to in this case
@@ -230,7 +230,7 @@ int getThreadIndex (pthread_t thread, JobContext *context)
 {
   for (int i = 0; i < context->multiThreadLevel; i++)
   {
-    if (context->threads[i] == thread)
+    if (pthread_equal (context->threads[i], thread))
     {
       return i;
     }
