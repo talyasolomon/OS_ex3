@@ -47,11 +47,12 @@ struct JobContext
           (multiThreadLevel)
     {
       threads = new pthread_t[multiThreadLevel];
-      threads = new pthread_t[multiThreadLevel];
       pthread_mutex_init (&mutex_3, nullptr);
       intermediateMap = IntermediateMap (multiThreadLevel, nullptr);
       sortBarrier = Barrier (multiThreadLevel);
       sem_init(&shuffleSemaphore, 0, 0);
+      counter = new std::atomic<uint64_t>(0);
+
     }
 
     ~JobContext ()
@@ -83,10 +84,12 @@ void* mapReduceThread (void *context)
 
   // Map phase
   *(jobContext->counter) = ((uint64_t)MAP_STAGE << BIT_62);
+  std::cout.flush() << getThreadIndex(pthread_self(), jobContext) << std::endl;
   while (*(jobContext->inputIndex) < static_cast<int>(jobContext->inputVec.size()))
   {
     int index = *(jobContext->inputIndex);
     (*(jobContext->inputIndex))++;
+    std::cout << jobContext->inputIndex->load() << std::endl;
     jobContext->client.map (inputVec[index].first, inputVec[index].second, jobContext);
     (*jobContext->counter) += ((uint64_t)1 << BIT_31);
   }
@@ -153,10 +156,10 @@ JobHandle startMapReduceJob (const MapReduceClient &client,
                              int multiThreadLevel)
 {
   JobContext *jobContext = new JobContext (client, inputVec, outputVec, multiThreadLevel);
-  *(jobContext->counter) = ((uint64_t)UNDEFINED_STAGE << BIT_62);
 
   for (int i = 0; i < multiThreadLevel; i++)
   {
+    std::cout << "loop: " << i << std::endl;
     pthread_create (&jobContext->threads[i], nullptr, mapReduceThread, jobContext);
   }
 
