@@ -6,7 +6,14 @@
 #include <semaphore.h>
 #include "Barrier/Barrier.h"
 
+/** Error messages */
 #define THREAD_NOT_FOUND "Thread not found in the system"
+#define FAILED_TO_JOIN "Failed to join the thread"
+#define FAILED_TO_LOCK "Failed to lock the mutex"
+#define FAILED_TO_UNLOCK "Failed to unlock the mutex"
+#define FAILED_TO_CREATE_THREAD "Failed to create the thread"
+
+/** Bit manipulation */
 #define BITS_0_31 0x7FFFFFFF
 #define BITS_32_61 0x3FFFFFFF  // TODO: why not used?
 #define BIT_62 62
@@ -19,6 +26,8 @@ struct JobContext;
 void sortIntermediateVec (JobContext *context);
 int getThreadIndex (pthread_t thread, JobContext *context);
 void shuffleIntermediateVec(JobContext *context);
+void mapPhase(JobContext *jobContext);
+void reducePhase(JobContext *jobContext);
 
 struct JobContext
 {
@@ -30,36 +39,55 @@ struct JobContext
     bool isJoined = false;
     std::atomic<uint64_t> *counter; // [62,
     // 63] - stage, [31, 61] - total tasks, [0, 30] - completed tasks
-    std::atomic<int> *inputIndex = new std::atomic<int>(0);
-    std::atomic<int> *reduceIndex = new std::atomic<int>(0);
-    std::atomic<int> *shuffledCount = new std::atomic<int>(0);
+    std::atomic<int> *inputIndex;
+    std::atomic<int> *reduceIndex;
+    std::atomic<int> *shuffledCount;
     IntermediateMap intermediateMap;
     IntermediateMap shuffledVec;
     pthread_mutex_t mutex_3;
     pthread_mutex_t stateMutex;
     pthread_mutex_t waitMutex;
-    Barrier sortBarrier;
+    Barrier* sortBarrier;
     sem_t shuffleSemaphore;
 
-    JobContext (const MapReduceClient &client, const InputVec &inputVec, OutputVec &outputVec, int multiThreadLevel)
+    JobContext (const MapReduceClient &client, const InputVec &inputVec, OutputVec &outputVec, int multiThreadLevel, Barrier barrier)
         : client(client), inputVec(inputVec), outputVec(outputVec),
-        multiThreadLevel(multiThreadLevel), intermediateMap(), sortBarrier
-          (multiThreadLevel)
+          multiThreadLevel(multiThreadLevel)
     {
       threads = new pthread_t[multiThreadLevel];
-      pthread_mutex_init (&mutex_3, nullptr);
-      intermediateMap = IntermediateMap (multiThreadLevel, nullptr);
-      sortBarrier = Barrier (multiThreadLevel);
-      sem_init(&shuffleSemaphore, 0, 0);
       counter = new std::atomic<uint64_t>(0);
-
+      inputIndex = new std::atomic<int>(0);
+      reduceIndex = new std::atomic<int>(0);
+      shuffledCount = new std::atomic<int>(0);
+      intermediateMap = IntermediateMap (multiThreadLevel, nullptr);
+      shuffledVec = IntermediateMap (multiThreadLevel, nullptr);
+      pthread_mutex_init (&mutex_3, nullptr);
+      pthread_mutex_init (&stateMutex, nullptr);
+      pthread_mutex_init (&waitMutex, nullptr);
+      sortBarrier = new Barrier (multiThreadLevel);
+      sem_init(&shuffleSemaphore, 0, 0);
     }
 
     ~JobContext ()
     {
-      pthread_mutex_destroy (&mutex_3);
-      sem_destroy(&shuffleSemaphore);
       delete[] threads;
+      delete counter;
+      delete inputIndex;
+      delete reduceIndex;
+      delete shuffledCount;
+      for (auto &intermediateVec : intermediateMap)
+      {
+        delete intermediateVec;
+      }
+      for (auto &shuffledVec : shuffledVec)
+      {
+        delete shuffledVec;
+      }
+      pthread_mutex_destroy (&mutex_3);
+      pthread_mutex_destroy (&stateMutex);
+      pthread_mutex_destroy (&waitMutex);
+      delete sortBarrier;
+      sem_destroy(&shuffleSemaphore);
     }
 };
 
@@ -75,32 +103,51 @@ bool comparePairs (const IntermediatePair &pair1, const IntermediatePair &pair2)
   return *(pair1.first) < *(pair2.first);
 }
 
+void lockMutex (pthread_mutex_t *mutex)
+{
+  if (pthread_mutex_lock (mutex) != 0)
+  {
+    std::cout << "system error: "<< FAILED_TO_LOCK << std::endl;
+    exit (1);
+  }
+}
+
+void unlockMutex (pthread_mutex_t *mutex)
+{
+  if (pthread_mutex_unlock (mutex) != 0)
+  {
+    std::cout << "system error: "<< FAILED_TO_UNLOCK << std::endl;
+    exit (1);
+  }
+}
+
 
 // TODO: fix this function
 void* mapReduceThread (void *context)
 {
   JobContext *jobContext = static_cast<JobContext *>(context);
-  const InputVec &inputVec = jobContext->inputVec;
+  mapPhase(jobContext);
 
-  // Map phase
-  *(jobContext->counter) = ((uint64_t)MAP_STAGE << BIT_62);
-  std::cout.flush() << getThreadIndex(pthread_self(), jobContext) << std::endl;
-  while (*(jobContext->inputIndex) < static_cast<int>(jobContext->inputVec.size()))
-  {
-    int index = *(jobContext->inputIndex);
-    (*(jobContext->inputIndex))++;
-    std::cout << jobContext->inputIndex->load() << std::endl;
-    jobContext->client.map (inputVec[index].first, inputVec[index].second, jobContext);
-    (*jobContext->counter) += ((uint64_t)1 << BIT_31);
-  }
+//  const InputVec &inputVec = jobContext->inputVec;
+//
+//  // Map phase
+//  *(jobContext->counter) = ((uint64_t)MAP_STAGE << BIT_62);
+//  std::cout.flush() << getThreadIndex(pthread_self(), jobContext) << std::endl;
+//  while (*(jobContext->inputIndex) < static_cast<int>(jobContext->inputVec.size()))
+//  {
+//    int index = *(jobContext->inputIndex);
+//    (*(jobContext->inputIndex))++;
+//    std::cout << jobContext->inputIndex->load() << std::endl;
+//    jobContext->client.map (inputVec[index].first, inputVec[index].second, jobContext);
+//    (*jobContext->counter) += ((uint64_t)1 << BIT_31);
+//  }
 
   // Sort phase
   sortIntermediateVec (jobContext);
 
   // Wait for all threads to complete the sort phase
-  jobContext->sortBarrier.barrier();
+  jobContext->sortBarrier->barrier();
 
-  // If this is the shuffle thread (thread 0), perform the shuffle operation
   if (pthread_equal(pthread_self(), jobContext->threads[0]))
   {
     // Shuffle phase
@@ -119,18 +166,51 @@ void* mapReduceThread (void *context)
   }
 
   // Reduce phase
-  *(jobContext->counter) = ((uint64_t)REDUCE_STAGE << BIT_62);
-  while (*(jobContext->reduceIndex) < static_cast<int>(jobContext->intermediateMap
-  .size()))
+  reducePhase(jobContext);
+
+//  *(jobContext->counter) = ((uint64_t)REDUCE_STAGE << BIT_62);
+//  while (*(jobContext->reduceIndex) < static_cast<int>(jobContext->intermediateMap
+//  .size()))
+//  {
+//    int index = *(jobContext->reduceIndex);
+//    (*(jobContext->reduceIndex))++;
+//    jobContext->client.reduce (jobContext->intermediateMap[index],
+//                          jobContext);
+//    (*jobContext->counter) += ((uint64_t)1 << BIT_31);  // TODO: check if
+//    // the increment correct
+//  }
+  pthread_exit (nullptr);
+}
+
+void mapPhase(JobContext *jobContext)
+{
+  const InputVec &inputVec = jobContext->inputVec;
+  *(jobContext->counter) = ((uint64_t)MAP_STAGE << BIT_62);
+  std::cout.flush() << getThreadIndex(pthread_self(), jobContext) << std::endl;
+  while (*(jobContext->inputIndex) < static_cast<int>(jobContext->inputVec.size()))
+  {
+    int index = *(jobContext->inputIndex);
+    (*(jobContext->inputIndex))++;
+    std::cout << jobContext->inputIndex->load() << std::endl;
+    jobContext->client.map (inputVec[index].first, inputVec[index].second, jobContext);
+    (*jobContext->counter) += ((uint64_t)1 << BIT_31);
+  }
+}
+
+void reducePhase(JobContext *jobContext)
+{
+  *(jobContext->counter) = ((uint64_t) REDUCE_STAGE << BIT_62);
+  while (*(jobContext->reduceIndex)
+         < static_cast<int>(jobContext->intermediateMap
+             .size ()))
   {
     int index = *(jobContext->reduceIndex);
     (*(jobContext->reduceIndex))++;
     jobContext->client.reduce (jobContext->intermediateMap[index],
-                          jobContext);
-    (*jobContext->counter) += ((uint64_t)1 << BIT_31);  // TODO: check if
+                               jobContext);
+    (*jobContext->counter) += ((uint64_t) 1 << BIT_31);  // TODO: check if
     // the increment correct
   }
-  return nullptr;
 }
 
 void emit2 (K2 *key, V2 *value, void *context)
@@ -145,22 +225,30 @@ void emit2 (K2 *key, V2 *value, void *context)
 void emit3 (K3 *key, V3 *value, void *context)
 {
   JobContext *jobContext = static_cast<JobContext *>(context);
-  pthread_mutex_lock (&jobContext->mutex_3);
+  lockMutex(&jobContext->mutex_3);
   OutputPair pair (key, value);
   jobContext->outputVec.push_back (pair);
-  pthread_mutex_unlock (&jobContext->mutex_3);
+  unlockMutex(&jobContext->mutex_3);
 }
 
 JobHandle startMapReduceJob (const MapReduceClient &client,
                              const InputVec &inputVec, OutputVec &outputVec,
                              int multiThreadLevel)
 {
-  JobContext *jobContext = new JobContext (client, inputVec, outputVec, multiThreadLevel);
+  JobContext *jobContext = new JobContext (client, inputVec, outputVec,
+                                           multiThreadLevel, Barrier
+                                               (multiThreadLevel));
 
   for (int i = 0; i < multiThreadLevel; i++)
   {
     std::cout << "loop: " << i << std::endl;
     pthread_create (&jobContext->threads[i], nullptr, mapReduceThread, jobContext);
+    if (pthread_create(&jobContext->threads[i], nullptr, mapReduceThread,
+                 jobContext) != 0)
+    {
+      std::cout << "system error: " << FAILED_TO_CREATE_THREAD << std::endl;
+      exit (1);
+    }
   }
 
   return static_cast<JobHandle>(jobContext);
@@ -169,7 +257,7 @@ JobHandle startMapReduceJob (const MapReduceClient &client,
 void waitForJob (JobHandle job)
 {
   JobContext *jobContext = static_cast<JobContext *>(job);
-  pthread_mutex_lock (&jobContext->waitMutex);
+  lockMutex(&jobContext->waitMutex);
   if (!jobContext->isJoined)
   {
     for (int i = 0; i < jobContext->multiThreadLevel; i++)
@@ -177,19 +265,19 @@ void waitForJob (JobHandle job)
       int success = pthread_join (jobContext->threads[i], nullptr);
       if (success != 0)
       {
-        std::cout << "system error: Failed to join the thread" << std::endl;
+        std::cout << "system error:" << FAILED_TO_JOIN << std::endl;
         exit (1);
       }
     }
     jobContext->isJoined = true;
   }
-  pthread_mutex_unlock (&jobContext->waitMutex);
+  unlockMutex(&jobContext->waitMutex);
 }
 
 void getJobState (JobHandle job, JobState *state)
 {
   JobContext *jobContext = (JobContext *)job;
-  pthread_mutex_lock(&jobContext->stateMutex);
+  lockMutex(&jobContext->stateMutex);
   uint64_t current_state = *(jobContext->counter);
   state->stage = static_cast<stage_t>(current_state >> BIT_62);
   uint64_t completedTasks = ((current_state >> BIT_31) & BITS_0_31);
@@ -211,22 +299,15 @@ void getJobState (JobHandle job, JobState *state)
         totalTasks = *jobContext->shuffledCount;
     }
   state->percentage = ((float)completedTasks / totalTasks) * 100;
-  pthread_mutex_unlock(&jobContext->stateMutex);
+  unlockMutex(&jobContext->stateMutex);
 }
 
 void closeJobHandle (JobHandle job)
 {
-  JobContext *jobContext = static_cast<JobContext *>(job);
+  JobContext *jobContext = (JobContext *)job;
 
-  // Ensure that the job has finished
   waitForJob (job);
-
-  // TODO: Destroy any mutexes or semaphores
-  // pthread_mutex_destroy(&jobContext->someMutex);
-  // sem_destroy(&jobContext->someSemaphore);
-
   delete jobContext;
-  job = nullptr;
 }
 
 int getThreadIndex (pthread_t thread, JobContext *context)
