@@ -4,7 +4,7 @@
 #include <iostream>
 #include <algorithm>
 #include <semaphore.h>
-#include "Barrier/Barrier.h"
+#include "Barrier.h"
 
 /** Error messages */
 #define THREAD_NOT_FOUND "Thread not found in the system"

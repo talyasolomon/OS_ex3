@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/CMakeFiles/googletest"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/CMakeFiles/googletest.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/CMakeFiles/googletest-complete.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/googletest-prefix/src/googletest-stamp/googletest-build.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/googletest-prefix/src/googletest-stamp/googletest-configure.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/googletest-prefix/src/googletest-stamp/googletest-download.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/googletest-prefix/src/googletest-stamp/googletest-install.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/googletest-prefix/src/googletest-stamp/googletest-mkdir.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/googletest-prefix/src/googletest-stamp/googletest-patch.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/googletest-prefix/src/googletest-stamp/googletest-test.rule"
+		},
+		{
+			"file" : "/mnt/c/Users/talya/Documents/Limudim/Year_C/Semester_B/OS/ex3/OS_ex3/cmake-build-debug/mattanTests/googletest-download/googletest-prefix/src/googletest-stamp/googletest-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"googletest"
+		],
+		"name" : "googletest"
+	}
+}
