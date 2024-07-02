@@ -40,15 +40,21 @@ struct JobContext
     int multiThreadLevel;
     pthread_t *threads;
     bool isJoined = false;
-    std::atomic<uint64_t> *counter; // [62, 63] - stage, [31, 61] - total tasks, [0, 30] - completed tasks
+//    std::atomic<uint64_t> *counter; // [62, 63] - stage, [31, 61] - total tasks, [0, 30] - completed tasks
+    std::atomic<int> *stageCounter;
+    std::atomic<int> *totalTasksCounter;
+    std::atomic<int> *completedCounter;
     std::atomic<int> *inputIndex;
     std::atomic<int> *reduceIndex;
-    std::atomic<int> *shuffledCount;
+    std::atomic<int> *keysCounter;
     IntermediateMap intermediateMap;
     IntermediateMap shuffledVec;
-    pthread_mutex_t mutex;
+    pthread_mutex_t mutex2;
+    pthread_mutex_t mutex3;
+    pthread_mutex_t stateMutex;
     pthread_mutex_t waitMutex;
-    Barrier* bari;
+    Barrier* sortBarrier;
+    Barrier* shuffleBarrier;
     sem_t shuffleSemaphore;
 
     JobContext (const MapReduceClient &client, const InputVec &inputVec, OutputVec &outputVec, int multiThreadLevel, Barrier barrier)
@@ -56,29 +62,38 @@ struct JobContext
           multiThreadLevel(multiThreadLevel)
     {
       threads = new pthread_t[multiThreadLevel];
-      counter = new std::atomic<uint64_t>(0);
+//      counter = new std::atomic<uint64_t>(0);
+      stageCounter = new std::atomic<int>(0);
+      totalTasksCounter = new std::atomic<int>(0);
+      completedCounter = new std::atomic<int>(0);
       inputIndex = new std::atomic<int>(0);
       reduceIndex = new std::atomic<int>(0);
-      shuffledCount = new std::atomic<int>(0);
+      keysCounter = new std::atomic<int>(0);
       intermediateMap = IntermediateMap (multiThreadLevel);
       shuffledVec = IntermediateMap ();
       for (int i = 0; i < multiThreadLevel; ++i)
       {
         intermediateMap[i] = new IntermediateVec();
       }
-      pthread_mutex_init (&mutex, nullptr);
+      pthread_mutex_init (&mutex2, nullptr);
+      pthread_mutex_init (&mutex3, nullptr);
+      pthread_mutex_init (&stateMutex, nullptr);
       pthread_mutex_init (&waitMutex, nullptr);
-      bari = new Barrier (multiThreadLevel);
+      sortBarrier = new Barrier (multiThreadLevel);
+      shuffleBarrier = new Barrier (multiThreadLevel);
 //      sem_init(&shuffleSemaphore, 0, 0);
     }
 
     ~JobContext ()
     {
       delete[] threads;
-      delete counter;
+//      delete counter;
+      delete stageCounter;
+      delete totalTasksCounter;
+      delete completedCounter;
       delete inputIndex;
       delete reduceIndex;
-      delete shuffledCount;
+      delete keysCounter;
       for (auto &intermediateVec : intermediateMap)
       {
         delete intermediateVec;
@@ -87,9 +102,12 @@ struct JobContext
       {
         delete shuffledVecElem;
       }
-      pthread_mutex_destroy(&mutex);
+      pthread_mutex_destroy(&mutex2);
+      pthread_mutex_destroy(&mutex3);
       pthread_mutex_destroy(&waitMutex);
-      delete bari;
+      pthread_mutex_destroy(&stateMutex);
+      delete sortBarrier;
+      delete shuffleBarrier;
       sem_destroy(&shuffleSemaphore);
     }
 };
@@ -153,14 +171,21 @@ void* mapReduceThread (void *context)
   sortIntermediateVec (jobContext);
 
   // Wait for all threads to complete the sort phase
-  jobContext->bari->barrier();
+  jobContext->sortBarrier->barrier();
 
   if (pthread_equal(pthread_self(), jobContext->threads[0]))
   {
     // Shuffle phase
-    *(jobContext->counter) = ((uint64_t) SHUFFLE_STAGE << BIT_62);
+//    *(jobContext->counter) = ((uint64_t) SHUFFLE_STAGE << BIT_62);
+    *(jobContext->stageCounter) = SHUFFLE_STAGE;
+    *(jobContext->completedCounter) = 0;
+    *(jobContext->totalTasksCounter) = jobContext->keysCounter->load ();
 
     shuffleIntermediateVec(jobContext);
+//    *(jobContext->counter) = ((uint64_t) REDUCE_STAGE << BIT_62);
+    *(jobContext->stageCounter) = REDUCE_STAGE;
+    *(jobContext->completedCounter) = 0;
+    *(jobContext->totalTasksCounter) = jobContext->shuffledVec.size();
   }
 
   // SEMAPHORE OPTION
@@ -175,7 +200,7 @@ void* mapReduceThread (void *context)
 //    sem_wait(&jobContext->shuffleSemaphore);
 //  }
 
-  jobContext->bari->barrier();
+  jobContext->shuffleBarrier->barrier();
   // Reduce phase
   reducePhase(jobContext);
 
@@ -185,20 +210,22 @@ void* mapReduceThread (void *context)
 void mapPhase(JobContext *jobContext)
 {
   const InputVec &inputVec = jobContext->inputVec;
-  *(jobContext->counter) = ((uint64_t)MAP_STAGE << BIT_62);
+//  *(jobContext->counter) = ((uint64_t)MAP_STAGE << BIT_62);
+    *(jobContext->stageCounter) = MAP_STAGE;
+  *(jobContext->completedCounter) = 0;
+  *(jobContext->totalTasksCounter) = jobContext->inputVec.size();
   while (*(jobContext->inputIndex) < static_cast<int>(jobContext->inputVec.size()))
   {
     int index = *(jobContext->inputIndex);
     jobContext->inputIndex->fetch_add(1);
-//    std::cout << jobContext->inputIndex->load() << std::endl;
     jobContext->client.map (inputVec[index].first, inputVec[index].second, jobContext);
-    (*jobContext->counter) += ((uint64_t)MAP_STAGE << BIT_31);
+//    (*jobContext->counter) += ((uint64_t)MAP_STAGE << BIT_31);
+    (*jobContext->completedCounter).fetch_add(1);
   }
 }
 
 void reducePhase(JobContext *jobContext)
 {
-  *(jobContext->counter) = ((uint64_t) REDUCE_STAGE << BIT_62);
   int vecSize = static_cast<int>(jobContext->shuffledVec.size ());
   int idx;
   while((idx = (*(jobContext->reduceIndex))++)<vecSize)
@@ -207,30 +234,31 @@ void reducePhase(JobContext *jobContext)
     jobContext->client.reduce (jobContext->shuffledVec[idx],
                                jobContext);
 
-    (*jobContext->counter) += ((uint64_t) 1 << BIT_31);
+//    (*jobContext->counter) += ((uint64_t) 1 << BIT_31);
+    (*jobContext->completedCounter).fetch_add(1);
   }
 }
 
 void emit2 (K2 *key, V2 *value, void *context)
 {
   JobContext *jobContext = static_cast<JobContext *>(context);
-  lockMutex(&jobContext->mutex);
+//  lockMutex(&jobContext->mutex2);
 
   int index = getThreadIndex (pthread_self (), jobContext);
   (*jobContext->intermediateMap[index]).push_back ((std::make_pair (key,
                                                                     value)));
-  ++(*jobContext->shuffledCount);
-  unlockMutex(&jobContext->mutex);
+  ++(*jobContext->keysCounter);
+//  unlockMutex(&jobContext->mutex2);
 
 }
 
 void emit3 (K3 *key, V3 *value, void *context)
 {
   JobContext *jobContext = static_cast<JobContext *>(context);
-  lockMutex(&jobContext->mutex);
+  lockMutex(&jobContext->mutex3);
   OutputPair pair (key, value);
   jobContext->outputVec.push_back (pair);
-  unlockMutex(&jobContext->mutex);
+  unlockMutex(&jobContext->mutex3);
 }
 
 
@@ -257,30 +285,33 @@ void waitForJob (JobHandle job)
 void getJobState (JobHandle job, JobState *state)
 {
   JobContext *jobContext = (JobContext *)job;
-  lockMutex(&jobContext->mutex);
-  uint64_t current_state = *(jobContext->counter);
-  state->stage = static_cast<stage_t>(current_state >> BIT_62);
-  uint64_t completedTasks = ((current_state >> BIT_31) & BITS_0_31);
-  uint64_t totalTasks;
-  if (state->stage == UNDEFINED_STAGE)
-  {
-    totalTasks = 1;  //TODO: check what to to in this case
-  }
-  else if (state->stage == MAP_STAGE)
-  {
-    totalTasks = jobContext->inputVec.size();
-  }
-  else if (state->stage == SHUFFLE_STAGE)
-  {
-    totalTasks = *jobContext->shuffledCount;
-  }
-  else
-  {
-    totalTasks = *jobContext->shuffledCount;
-  }
+  lockMutex(&jobContext->stateMutex);
+//  uint64_t current_state = *(jobContext->counter);
+//    int current_state = *(jobContext->stageCounter);
+//  state->stage = static_cast<stage_t>(current_state >> BIT_62);
+//  uint64_t completedTasks = ((current_state >> BIT_31) & BITS_0_31);
+  state->stage = static_cast<stage_t>(jobContext->stageCounter->load ());
+    int completedTasks = jobContext->completedCounter->load ();
+  int totalTasks =  jobContext->totalTasksCounter->load ();
+//  if (state->stage == UNDEFINED_STAGE)
+//  {
+//    totalTasks = 1;  //TODO: check what to to in this case
+//  }
+//  else if (state->stage == MAP_STAGE)
+//  {
+//    totalTasks = jobContext->inputVec.size();
+//  }
+//  else if (state->stage == SHUFFLE_STAGE)
+//  {
+//    totalTasks = *jobContext->keysCounter;
+//  }
+//  else
+//  {
+//    totalTasks = *jobContext->keysCounter;
+//  }
 
   state->percentage = ((float)completedTasks / totalTasks) * 100;
-  unlockMutex(&jobContext->mutex);
+  unlockMutex(&jobContext->stateMutex);
 }
 
 void closeJobHandle (JobHandle job)
@@ -314,7 +345,7 @@ void sortIntermediateVec (JobContext *context)
 
 void shuffleIntermediateVec(JobContext *context)
 {
-  while (((*(context->counter) >> BIT_31) & BITS_0_31) < *context->shuffledCount)
+  while ( *context->completedCounter < *context->totalTasksCounter)
   {
     IntermediatePair maxPair = findMaxKey(context);
 
@@ -327,10 +358,11 @@ void shuffleIntermediateVec(JobContext *context)
         vec->pop_back();
       }
     }
-    (*context->counter) += (sameKeyVec->size()<< BIT_31);  // Increment the completed tasks
-    context->shuffledVec.push_back(sameKeyVec);
+    (*context->completedCounter) += (int) sameKeyVec->size();
+
+      context->shuffledVec.push_back(sameKeyVec);
   }
-  *context->shuffledCount = context->shuffledVec.size();
+  *context->keysCounter = context->shuffledVec.size();
 }
 
 IntermediatePair findMaxKey(const JobContext *context)
